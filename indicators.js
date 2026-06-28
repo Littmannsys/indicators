@@ -342,6 +342,21 @@ function processCandles(symbol, timeframe, candles) {
   initEMA(symbol, historicalData[symbol][timeframe], 20);
   initEMA(symbol, historicalData[symbol][timeframe], 50);
 
+  // Reset emaPriceSide so the first tick after (re)load doesn't trigger a false cross.
+  // We set it to the current side based on the last candle close vs seeded EMA,
+  // so there is NO sudden side-change on first tick.
+  ;[20, 50].forEach(period => {
+    const ema = emaState[symbol][period];
+    const lastClose = historicalData[symbol][timeframe].length > 0
+      ? historicalData[symbol][timeframe][historicalData[symbol][timeframe].length - 1].close
+      : null;
+    if (ema !== null && lastClose !== null) {
+      emaPriceSide[symbol][timeframe][period] = lastClose >= ema ? 'above' : 'below';
+    } else {
+      emaPriceSide[symbol][timeframe][period] = null;
+    }
+  });
+
   console.log(
     `[${symbol}/${timeframe}] Loaded ${data.length} candles. ` +
     `EMA20: ${emaState[symbol][20] !== null ? emaState[symbol][20].toFixed(4) : 'N/A'} | ` +
