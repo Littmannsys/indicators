@@ -212,12 +212,15 @@ function checkEMATouches(symbol, timeframe, currentPrice) {
       `${emoji} *${period} EMA ${symbolName} on ${timeframeName}* : price Touch\n` +
       `EMA: ${ema.toFixed(4)} | Price: ${currentPrice.toFixed(4)}`;
 
+    // CRITICAL: set the lock SYNCHRONOUSLY before the async send.
+    // If we set it after, two ticks arriving before the Promise resolves
+    // both pass the guard and fire duplicate Telegram messages.
+    state.lastNotifCandle = currentCount;
+    state.notifSent       = true;
+
     const dedupKey = `${symbol}:${timeframe}:${period}`;
     sendTelegramNotification(message, dedupKey);
     console.log(`[Alert] ${message.replace(/\*/g, '')}`);
-
-    state.lastNotifCandle = currentCount;
-    state.notifSent       = true;
   });
 }
 
