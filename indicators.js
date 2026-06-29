@@ -63,13 +63,13 @@ function initState() {
       emaNotificationState[sym][tf] = {};
       emaPriceSide[sym][tf]         = {};
 
-      [20, 50].forEach(period => {
+      [50].forEach(period => {
         emaNotificationState[sym][tf][period] = { lastNotifCandle: null, notifSent: false };
         emaPriceSide[sym][tf][period]         = null;
       });
     });
 
-    [20, 50].forEach(period => {
+    [50].forEach(period => {
       emaState[sym][period] = null;
     });
   });
@@ -134,7 +134,7 @@ function checkEMATouches(symbol, timeframe, currentPrice) {
   const currentCount  = candleCount[symbol][timeframe];
   const now           = Date.now();
 
-  [20, 50].forEach(period => {
+  [50].forEach(period => {
     const ema = getEMA(symbol, period);
     if (ema === null) return;
 
@@ -170,16 +170,16 @@ function checkEMATouches(symbol, timeframe, currentPrice) {
     alertSentAt.set(dedupKey, now);   // set synchronously before async send
 
     const crossedUp = currentSide === 'above';
-    const emoji     = crossedUp ? '📈' : '📉';
+    const arrow     = crossedUp ? '⬆️' : '⬇️';
     const alertTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // Telegram message
     const message =
-      `${emoji} *${period} EMA ${symbolName}* [${alertTime}]\n` +
-      `EMA: ${ema.toFixed(4)} | Price: ${currentPrice.toFixed(4)}`;
+      `${period} EMA ${symbolName} ${arrow}\n\n` +
+      `EMA: ${ema.toFixed(4)} | Price: ${currentPrice.toFixed(4)}  [Alert ${alertTime}]`;
 
     // Console log matches Telegram format
-    console.log(`\n${emoji} ${period} EMA ${symbolName} [Alert ${alertTime}]\nEMA: ${ema.toFixed(4)} | Price: ${currentPrice.toFixed(4)}`);
+    console.log(`\n${period} EMA ${symbolName} ${arrow}\nEMA: ${ema.toFixed(4)} | Price: ${currentPrice.toFixed(4)}  [Alert ${alertTime}]`);
     sendTelegramNotification(message, dedupKey);
   });
 }
@@ -203,7 +203,6 @@ function updateCurrentCandle(symbol, price, timestamp) {
           historicalData[symbol][timeframe].shift();
 
         const closedClose = currentCandles[symbol][timeframe].close;
-        advanceEMA(symbol, 20, closedClose);
         advanceEMA(symbol, 50, closedClose);
         candleCount[symbol][timeframe]++;
         console.log(`\n[${symbol}/${timeframe}] Candle #${candleCount[symbol][timeframe]} closed @ ${closedClose}`);
@@ -225,12 +224,10 @@ function updateCurrentCandle(symbol, price, timestamp) {
 function recalculateIndicators(symbol, timeframe, livePrice) {
   if (!historicalData[symbol][timeframe].length || !currentCandles[symbol][timeframe]) return;
 
-  const ema20 = getEMA(symbol, 20);
   const ema50 = getEMA(symbol, 50);
 
   process.stdout.write(
     `\r[${symbol}] Price:${livePrice.toFixed(4)} ` +
-    `EMA20:${ema20 !== null ? ema20.toFixed(4) : 'N/A'} ` +
     `EMA50:${ema50 !== null ? ema50.toFixed(4) : 'N/A'}   `
   );
 
@@ -256,12 +253,11 @@ function processCandles(symbol, timeframe, candles) {
     low: lastCandle.low,   close: lastCandle.close
   };
 
-  initEMA(symbol, historicalData[symbol][timeframe], 20);
   initEMA(symbol, historicalData[symbol][timeframe], 50);
 
   // Seed emaPriceSide from the last CLOSED candle's close so the first
   // live tick never sees a null→side transition and fires a false cross
-  [20, 50].forEach(period => {
+  [50].forEach(period => {
     const ema      = emaState[symbol][period];
     const closed   = historicalData[symbol][timeframe];
     const lastClose = closed.length ? closed[closed.length - 1].close : null;
@@ -271,7 +267,6 @@ function processCandles(symbol, timeframe, candles) {
 
   console.log(
     `[${symbol}/${timeframe}] Loaded ${data.length} candles | ` +
-    `EMA20:${emaState[symbol][20]?.toFixed(4) ?? 'N/A'} ` +
     `EMA50:${emaState[symbol][50]?.toFixed(4) ?? 'N/A'}`
   );
 }
