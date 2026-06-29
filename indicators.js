@@ -17,7 +17,7 @@ const API_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 let ws;
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'R_25', 'stpRNG'];
+const SYMBOLS    = ['R_10', 'R_25', 'R_50'];
 const TIMEFRAMES = ['5min'];
 
 const timeframeMap = { '5min': 300 };
@@ -25,7 +25,7 @@ const timeframeMap = { '5min': 300 };
 const displayNames = {
   'R_10':   'Volatility 10 Index',
   'R_25':   'Volatility 25 Index',
-  'stpRNG': 'Step Index 100 stpRNG',
+  'R_50':   'Volatility 50 Index',
   '5min':   '5 minutes'
 };
 
