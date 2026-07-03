@@ -34,32 +34,26 @@ const MAX_HISTORICAL_CANDLES = 5000;
 // How many CLOSED candles must pass before the same EMA can alert again
 const COOLDOWN_CANDLES = 5;
 
-// Hard minimum seconds between any two Telegram sends for the same key
-const MIN_ALERT_SECONDS = 240;
-
 // ─── State ───────────────────────────────────────────────────────────────────
 const historicalData       = {};
 const currentCandles       = {};
-const candleCount          = {};
 const emaNotificationState = {};
-const emaState             = {}; // Persistent EMA line values
+const emaState             = {}; 
 
 function initState() {
   SYMBOLS.forEach(sym => {
     historicalData[sym]       = {};
     currentCandles[sym]       = {};
-    candleCount[sym]          = {};
     emaNotificationState[sym] = {};
     emaState[sym]             = {};
 
     TIMEFRAMES.forEach(tf => {
       historicalData[sym][tf]       = [];
       currentCandles[sym][tf]       = null;
-      candleCount[sym][tf]          = 0;
       emaNotificationState[sym][tf] = {};
 
       [20].forEach(period => {
-        emaNotificationState[sym][tf][period] = { lastNotifCandle: null, notifSent: false };
+        emaNotificationState[sym][tf][period] = { lastNotifTimestamp: null, notifSent: false };
       });
     });
 
@@ -72,8 +66,6 @@ function initState() {
 initState();
 
 // ─── Telegram ────────────────────────────────────────────────────────────────
-const alertSentAt = new Map();
-
 async function sendTelegramNotification(message, dedupKey) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
@@ -120,35 +112,34 @@ function getEMA(symbol, period) {
 }
 
 // ─── EMA cross detection ──────────────────────────────────────────────────────
-function checkEMATouches(symbol, timeframe, prevClose, currentPrice) {
-  const symbolName    = displayNames[symbol]    || symbol;
-  const currentCount  = candleCount[symbol][timeframe];
-  const now           = Date.now();
+function checkEMATouches(symbol, timeframe, prevClose, currentPrice, currentTimestamp) {
+  const symbolName  = displayNames[symbol] || symbol;
+  const granularity = timeframeMap[timeframe];
 
   [20].forEach(period => {
-    const ema = getEMA(symbol, period); // Current active EMA value before advance
+    const ema = getEMA(symbol, period); 
     if (ema === null) return;
 
     const k = 2 / (period + 1);
-    const nextEma = currentPrice * k + ema * (1 - k); // Expected EMA at candle completion
+    const nextEma = currentPrice * k + ema * (1 - k); 
 
     // Stateless verification: Check if closes cross their respective EMAs
     const previouslyAbove = prevClose >= ema;
     const currentlyAbove  = currentPrice >= nextEma;
 
-    // If both are true or both are false, no true line crossing occurred
     if (previouslyAbove === currentlyAbove) return;
 
-    const dedupKey   = `${symbol}:${timeframe}:${period}`;
-    const lastSentMs = alertSentAt.get(dedupKey) || 0;
-    const state      = emaNotificationState[symbol][timeframe][period];
+    const dedupKey = `${symbol}:${timeframe}:${period}`;
+    const state    = emaNotificationState[symbol][timeframe][period];
 
-    // ── Cooldown updates ─────────────────────────────────────────────────────
-    const candlesClear = state.lastNotifCandle === null ||
-                         (currentCount - state.lastNotifCandle) >= COOLDOWN_CANDLES;
-    const timeClear    = (now - lastSentMs) >= (MIN_ALERT_SECONDS * 1000);
+    // ── Absolute Candle Cooldown Evaluation ──────────────────────────────────
+    const candlesPassed = state.lastNotifTimestamp === null 
+      ? Infinity 
+      : (currentTimestamp - state.lastNotifTimestamp) / granularity;
 
-    if (state.notifSent && candlesClear && timeClear) {
+    const candlesClear = candlesPassed >= COOLDOWN_CANDLES;
+
+    if (state.notifSent && candlesClear) {
       state.notifSent = false;
       console.log(`[Lock] Released ${dedupKey}`);
     }
@@ -156,9 +147,8 @@ function checkEMATouches(symbol, timeframe, prevClose, currentPrice) {
     if (state.notifSent) return;
 
     // ── Genuine cross verified ───────────────────────────────────────────────
-    state.lastNotifCandle = currentCount;
-    state.notifSent       = true;
-    alertSentAt.set(dedupKey, now);
+    state.lastNotifTimestamp = currentTimestamp;
+    state.notifSent          = true;
 
     const crossedUp = currentlyAbove;
     const arrow     = crossedUp ? '⬆️' : '⬇️';
@@ -187,23 +177,24 @@ function updateCurrentCandle(symbol, price, timestamp) {
         currentCandles[symbol][timeframe].timestamp !== candleTime) {
 
       if (currentCandles[symbol][timeframe]) {
-        historicalData[symbol][timeframe].push(currentCandles[symbol][timeframe]);
+        const closedCandle = currentCandles[symbol][timeframe];
+        historicalData[symbol][timeframe].push(closedCandle);
         if (historicalData[symbol][timeframe].length > MAX_HISTORICAL_CANDLES)
           historicalData[symbol][timeframe].shift();
 
         const hData = historicalData[symbol][timeframe];
         const len = hData.length;
-        const closedClose = currentCandles[symbol][timeframe].close;
+        const closedClose = closedCandle.close;
+        const closedTimestamp = closedCandle.timestamp;
 
-        // Ensure we have at least 2 elements to compare past vs present closed states
+        // Ensure we have at least 2 historical items to verify cross state safely
         if (len >= 2) {
           const prevClose = hData[len - 2].close;
-          checkEMATouches(symbol, timeframe, prevClose, closedClose);
+          checkEMATouches(symbol, timeframe, prevClose, closedClose, closedTimestamp);
         }
 
         advanceEMA(symbol, 20, closedClose);
-        candleCount[symbol][timeframe]++;
-        console.log(`\n[${symbol}/${timeframe}] Candle #${candleCount[symbol][timeframe]} closed @ ${closedClose}`);
+        console.log(`\n[${symbol}/${timeframe}] Candle closed @ ${closedClose}`);
       }
 
       currentCandles[symbol][timeframe] = {
