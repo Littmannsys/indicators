@@ -3,7 +3,7 @@
 /**
  * Deriv EMA Indicator — Node.js (server-side)
  * Requires: ws  →  npm install ws
- * Usage:    node indicators.js
+ * Usage:    node ema15min.js
  */
 
 const WebSocket = require('ws');
@@ -17,20 +17,26 @@ const API_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const EMA_PERIOD       = 20; // Set to 20 EMA
-const COOLDOWN_CANDLES = 5;  // Closed candles to wait before re-alerting
+const EMA_PERIODS      = [20, 50]; // Tracks both 20 and 50 EMA
+const COOLDOWN_CANDLES = 5;        // Closed candles to wait before re-alerting
+
+// Emoji mapping to identify the EMA period
+const EMA_EMOJIS = {
+  20: '🤤',
+  50: '🫪'
+};
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
 const SYMBOLS    = ['R_10', 'R_25', 'R_50'];
-const TIMEFRAMES = ['5min'];
+const TIMEFRAMES = ['15min'];
 
-const timeframeMap = { '5min': 300 };
+const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
-  'R_10':   'Volatility 10 Index',
-  'R_25':   'Volatility 25 Index',
-  'R_50':   'Volatility 50 Index',
-  '5min':   '5 minutes'
+  'R_10':    'Volatility 10 Index',
+  'R_25':    'Volatility 25 Index',
+  'R_50':    'Volatility 50 Index',
+  '15min':   '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -53,12 +59,12 @@ function initState() {
       currentCandles[sym][tf]       = null;
       emaNotificationState[sym][tf] = {};
 
-      [EMA_PERIOD].forEach(period => {
+      EMA_PERIODS.forEach(period => {
         emaNotificationState[sym][tf][period] = { lastNotifTimestamp: null, notifSent: false };
       });
     });
 
-    [EMA_PERIOD].forEach(period => {
+    EMA_PERIODS.forEach(period => {
       emaState[sym][period] = null;
     });
   });
@@ -112,23 +118,20 @@ function getEMA(symbol, period) {
   return emaState[symbol][period];
 }
 
-// ─── EMA cross detection ──────────────────────────────────────────────────────
-function checkEMATouches(symbol, timeframe, prevClose, currentPrice, currentTimestamp) {
+// ─── EMA touch detection ──────────────────────────────────────────────────────
+function checkEMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
   const granularity = timeframeMap[timeframe];
+  const currentTimestamp = closedCandle.timestamp;
 
-  [EMA_PERIOD].forEach(period => {
+  EMA_PERIODS.forEach(period => {
     const ema = getEMA(symbol, period); 
     if (ema === null) return;
 
-    const k = 2 / (period + 1);
-    const nextEma = currentPrice * k + ema * (1 - k); 
+    // Touch condition: The EMA value lies anywhere between or exactly on the Candle's High and Low[cite: 1]
+    const touched = closedCandle.low <= ema && closedCandle.high >= ema;
 
-    // Stateless verification: Check if closes cross their respective EMAs
-    const previouslyAbove = prevClose >= ema;
-    const currentlyAbove  = currentPrice >= nextEma;
-
-    if (previouslyAbove === currentlyAbove) return;
+    if (!touched) return;
 
     const dedupKey = `${symbol}:${timeframe}:${period}`;
     const state    = emaNotificationState[symbol][timeframe][period];
@@ -147,19 +150,23 @@ function checkEMATouches(symbol, timeframe, prevClose, currentPrice, currentTime
 
     if (state.notifSent) return;
 
-    // ── Genuine cross verified ───────────────────────────────────────────────
+    // ── Genuine touch verified ───────────────────────────────────────────────
     state.lastNotifTimestamp = currentTimestamp;
     state.notifSent          = true;
 
-    const crossedUp = currentlyAbove;
-    const arrow     = crossedUp ? '⬆️' : '⬇️';
     const alertTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    
+    // Get the identifying emoji for the specific EMA period[cite: 1]
+    const emaEmoji = EMA_EMOJIS[period] || '🔔';
 
     const message =
-      `${symbolName} ${arrow}\n` +
-      `EMA ${EMA_PERIOD}: ${nextEma.toFixed(4)} | Price: ${currentPrice.toFixed(4)}`;
+      `${emaEmoji} *EMA ${period} Touch Alert* ${emaEmoji}\n` +
+      `*Asset:* ${symbolName}\n` +
+      `*Timeframe:* ${displayNames[timeframe] || timeframe}\n` +
+      `*EMA ${period}:* ${ema.toFixed(4)}\n` +
+      `*Candle Range:* High ${closedCandle.high.toFixed(4)} | Low ${closedCandle.low.toFixed(4)}`;
 
-    console.log(`\n${symbolName} ${arrow}\nEMA ${EMA_PERIOD}: ${nextEma.toFixed(4)} | Price: ${currentPrice.toFixed(4)}  [${alertTime}]`);
+    console.log(`\n${symbolName} ${emaEmoji} EMA ${period}: ${ema.toFixed(4)} | Price: ${closedCandle.close.toFixed(4)} [${alertTime}]`);
     sendTelegramNotification(message, dedupKey);
   });
 }
@@ -183,18 +190,14 @@ function updateCurrentCandle(symbol, price, timestamp) {
         if (historicalData[symbol][timeframe].length > MAX_HISTORICAL_CANDLES)
           historicalData[symbol][timeframe].shift();
 
-        const hData = historicalData[symbol][timeframe];
-        const len = hData.length;
         const closedClose = closedCandle.close;
-        const closedTimestamp = closedCandle.timestamp;
 
-        // Ensure we have at least 2 historical items to verify cross state safely
-        if (len >= 2) {
-          const prevClose = hData[len - 2].close;
-          checkEMATouches(symbol, timeframe, prevClose, closedClose, closedTimestamp);
-        }
+        // Check for EMA touches using the fully formed closed candle[cite: 1]
+        checkEMATouches(symbol, timeframe, closedCandle);
 
-        advanceEMA(symbol, EMA_PERIOD, closedClose);
+        EMA_PERIODS.forEach(period => {
+          advanceEMA(symbol, period, closedClose);
+        });
         console.log(`\n[${symbol}/${timeframe}] Candle closed @ ${closedClose}`);
       }
 
@@ -214,11 +217,14 @@ function updateCurrentCandle(symbol, price, timestamp) {
 function recalculateIndicators(symbol, timeframe, livePrice) {
   if (!historicalData[symbol][timeframe].length || !currentCandles[symbol][timeframe]) return;
 
-  const emaVal = getEMA(symbol, EMA_PERIOD);
+  let emaString = '';
+  EMA_PERIODS.forEach(period => {
+    const emaVal = getEMA(symbol, period);
+    emaString += `EMA${period}:${emaVal !== null ? emaVal.toFixed(4) : 'N/A'} `;
+  });
 
   process.stdout.write(
-    `\r[${symbol}] Price:${livePrice.toFixed(4)} ` +
-    `EMA${EMA_PERIOD}:${emaVal !== null ? emaVal.toFixed(4) : 'N/A'}   `
+    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${emaString}  `
   );
 }
 
@@ -241,11 +247,13 @@ function processCandles(symbol, timeframe, candles) {
     low: lastCandle.low,   close: lastCandle.close
   };
 
-  initEMA(symbol, historicalData[symbol][timeframe], EMA_PERIOD);
+  EMA_PERIODS.forEach(period => {
+    initEMA(symbol, historicalData[symbol][timeframe], period);
+  });
 
+  const emaLogDetails = EMA_PERIODS.map(p => `EMA${p}:${emaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
   console.log(
-    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ` +
-    `EMA${EMA_PERIOD}:${emaState[symbol][EMA_PERIOD]?.toFixed(4) ?? 'N/A'}`
+    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${emaLogDetails}`
   );
 }
 
