@@ -17,17 +17,17 @@ const API_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const EMA_PERIODS      = [20, 50]; // Tracks both 20 and 50 EMA
+const EMA_PERIODS      = [17, 47]; // Tracks both 17 and 47 EMA
 const COOLDOWN_CANDLES = 5;        // Closed candles to wait before re-alerting
 
-// Emoji mapping to identify the EMA period[cite: 1]
+// Emoji mapping to identify the EMA period
 const EMA_EMOJIS = {
-  20: '🤤',
-  50: '🫪'
+  17: '🤤',
+  47: '🫪'
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'R_25', 'R_50'];
+const SYMBOLS    = ['R_10', 'R_25']; 
 const TIMEFRAMES = ['5min'];
 
 const timeframeMap = { '5min': 300 }; // 5 mins = 300 seconds
@@ -35,7 +35,6 @@ const timeframeMap = { '5min': 300 }; // 5 mins = 300 seconds
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   'R_25':    'Volatility 25 Index',
-  'R_50':    'Volatility 50 Index',
   '5min':    '5 minutes'
 };
 
@@ -128,7 +127,7 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
     const ema = getEMA(symbol, period); 
     if (ema === null) return;
 
-    // Touch condition: The EMA value lies anywhere between or exactly on the Candle's High and Low[cite: 1]
+    // Touch condition: The EMA value lies anywhere between or exactly on the Candle's High and Low
     const touched = closedCandle.low <= ema && closedCandle.high >= ema;
 
     if (!touched) return;
@@ -154,11 +153,11 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
     state.lastNotifTimestamp = currentTimestamp;
     state.notifSent          = true;
 
-    // Get the identifying emoji for the specific EMA period[cite: 1]
+    // Get the identifying emoji for the specific EMA period
     const emaEmoji = EMA_EMOJIS[period] || '🔔';
 
     // Formatted exact log message as requested
-    const message = `${symbolName} ${emaEmoji} EMA ${period}: ${ema.toFixed(4)} | Price: ${closedCandle.close.toFixed(4)}`;
+    const message = `${symbolName} ${emaEmoji}EMA ${period}: ${ema.toFixed(4)} | Price: ${closedCandle.close.toFixed(4)}`;
 
     console.log(`\n${message}`);
     sendTelegramNotification(message, dedupKey);
@@ -186,7 +185,7 @@ function updateCurrentCandle(symbol, price, timestamp) {
 
         const closedClose = closedCandle.close;
 
-        // Check for EMA touches using the fully formed closed candle[cite: 1]
+        // Check for EMA touches using the fully formed closed candle
         checkEMATouches(symbol, timeframe, closedCandle);
 
         EMA_PERIODS.forEach(period => {
@@ -264,6 +263,7 @@ function requestCandles(symbol, timeframe) {
   });
 }
 
+// ─── WebSocket initialization & event handling ───────────────────────────────
 function subscribeToTicks(symbol) {
   sendMessage({ ticks: symbol, subscribe: 1 });
 }
