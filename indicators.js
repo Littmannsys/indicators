@@ -3,7 +3,7 @@
 /**
  * Deriv EMA Indicator — Node.js (server-side)
  * Requires: ws  →  npm install ws
- * Usage:    node ema15min.js
+ * Usage:    node ema2min.js
  */
 
 const WebSocket = require('ws');
@@ -17,24 +17,24 @@ const API_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const EMA_PERIODS      = [17, 57]; // Tracks both 17 and 57 EMA
-const COOLDOWN_CANDLES = 5;        // Closed candles to wait before re-alerting
+const EMA_PERIODS        = [20]; // Tracks only the 20 EMA
+const COOLDOWN_CANDLES   = 5;        // Closed candles to wait before re-alerting for touches
+const NO_TOUCH_SECONDS   = 20 * 60;  // 20 minutes (in seconds) for the no-touch alert
 
 // Emoji mapping to identify the EMA period
 const EMA_EMOJIS = {
-  17: '🤤',
-  57: '🫪'
+  20: '2️⃣0️⃣'
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'R_25']; 
+const SYMBOLS    = ['1HZ10V', '1HZ25V']; 
 const TIMEFRAMES = ['5min'];
 
 const timeframeMap = { '5min': 300 }; // 5 mins = 300 seconds
 
 const displayNames = {
-  'R_10':    'Volatility 10 Index',
-  'R_25':    'Volatility 25 Index',
+  '1HZ10V':  'Volatility 10 (1s) Index',
+  '1HZ25V':  'Volatility 25 (1s) Index',
   '5min':    '5 minutes'
 };
 
@@ -59,7 +59,12 @@ function initState() {
       emaNotificationState[sym][tf] = {};
 
       EMA_PERIODS.forEach(period => {
-        emaNotificationState[sym][tf][period] = { lastNotifTimestamp: null, notifSent: false };
+        emaNotificationState[sym][tf][period] = { 
+          lastAlertTimestamp: null, 
+          lastTouchTimestamp: null,
+          notifSent: false, 
+          noTouchAlertSent: false 
+        };
       });
     });
 
@@ -117,7 +122,7 @@ function getEMA(symbol, period) {
   return emaState[symbol][period];
 }
 
-// ─── EMA touch detection ──────────────────────────────────────────────────────
+// ─── EMA touch and timeout detection ─────────────────────────────────────────
 function checkEMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
   const granularity = timeframeMap[timeframe];
@@ -130,37 +135,50 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
     // Touch condition: The EMA value lies anywhere between or exactly on the Candle's High and Low
     const touched = closedCandle.low <= ema && closedCandle.high >= ema;
 
-    if (!touched) return;
-
     const dedupKey = `${symbol}:${timeframe}:${period}`;
     const state    = emaNotificationState[symbol][timeframe][period];
+    const emaEmoji = EMA_EMOJIS[period] || period;
 
-    // ── Absolute Candle Cooldown Evaluation ──────────────────────────────────
-    const candlesPassed = state.lastNotifTimestamp === null 
-      ? Infinity 
-      : (currentTimestamp - state.lastNotifTimestamp) / granularity;
+    // 1. Process standard EMA Touch
+    if (touched) {
+      // Record the exact time of this touch and reset the 20-min alert flag
+      state.lastTouchTimestamp = currentTimestamp;
+      state.noTouchAlertSent   = false;
 
-    const candlesClear = candlesPassed >= COOLDOWN_CANDLES;
+      // Evaluate Cooldown for Touch Alert
+      const candlesPassed = state.lastAlertTimestamp === null 
+        ? Infinity 
+        : (currentTimestamp - state.lastAlertTimestamp) / granularity;
 
-    if (state.notifSent && candlesClear) {
-      state.notifSent = false;
-      console.log(`[Lock] Released ${dedupKey}`);
+      const candlesClear = candlesPassed >= COOLDOWN_CANDLES;
+
+      if (state.notifSent && candlesClear) {
+        state.notifSent = false;
+        console.log(`[Lock] Released ${dedupKey}`);
+      }
+
+      if (!state.notifSent) {
+        state.lastAlertTimestamp = currentTimestamp;
+        state.notifSent          = true;
+
+        const message = `${symbolName} EMA${emaEmoji}: ${ema.toFixed(4)} | Price: ${closedCandle.close.toFixed(4)}`;
+        console.log(`\n${message}`);
+        sendTelegramNotification(message, dedupKey);
+      }
     }
 
-    if (state.notifSent) return;
-
-    // ── Genuine touch verified ───────────────────────────────────────────────
-    state.lastNotifTimestamp = currentTimestamp;
-    state.notifSent          = true;
-
-    // Get the identifying emoji for the specific EMA period
-    const emaEmoji = EMA_EMOJIS[period] || '🔔';
-
-    // Formatted exact log message as requested
-    const message = `${symbolName} ${emaEmoji}EMA ${period}: ${ema.toFixed(4)} | Price: ${closedCandle.close.toFixed(4)}`;
-
-    console.log(`\n${message}`);
-    sendTelegramNotification(message, dedupKey);
+    // 2. Process 20-Minute No-Touch Condition
+    if (state.lastTouchTimestamp !== null && !state.noTouchAlertSent) {
+      const timeSinceLastTouch = currentTimestamp - state.lastTouchTimestamp;
+      
+      if (timeSinceLastTouch >= NO_TOUCH_SECONDS) {
+        state.noTouchAlertSent = true; // Mark as sent so it doesn't spam
+        
+        const message = `⏳ ${symbolName} EMA${emaEmoji} has NOT been touched in the last 20 minutes.`;
+        console.log(`\n${message}`);
+        sendTelegramNotification(message, `${dedupKey}:no-touch`);
+      }
+    }
   });
 }
 
@@ -185,7 +203,7 @@ function updateCurrentCandle(symbol, price, timestamp) {
 
         const closedClose = closedCandle.close;
 
-        // Check for EMA touches using the fully formed closed candle
+        // Check for EMA touches & timeouts using the fully formed closed candle
         checkEMATouches(symbol, timeframe, closedCandle);
 
         EMA_PERIODS.forEach(period => {
