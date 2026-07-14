@@ -19,7 +19,7 @@ let ws;
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const EMA_PERIODS        = [20]; // Tracks only the 20 EMA
 const COOLDOWN_CANDLES   = 5;        // Closed candles to wait before re-alerting for touches
-const NO_TOUCH_SECONDS   = 20 * 60;  // 20 minutes (in seconds) for the no-touch alert
+const NO_TOUCH_SECONDS   = 50 * 60;  // 50 minutes (in seconds) for the no-touch alert
 
 // Emoji mapping to identify the EMA period
 const EMA_EMOJIS = {
@@ -167,14 +167,14 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
       }
     }
 
-    // 2. Process 20-Minute No-Touch Condition
+    // 2. Process 50-Minute No-Touch Condition
     if (state.lastTouchTimestamp !== null && !state.noTouchAlertSent) {
       const timeSinceLastTouch = currentTimestamp - state.lastTouchTimestamp;
       
       if (timeSinceLastTouch >= NO_TOUCH_SECONDS) {
         state.noTouchAlertSent = true; // Mark as sent so it doesn't spam
         
-        const message = `⏳ ${symbolName} EMA${emaEmoji} has NOT been touched in the last 20 minutes.`;
+        const message = `⏳ ${symbolName} EMA${emaEmoji} has NOT been touched in the last 50 minutes.`;
         console.log(`\n${message}`);
         sendTelegramNotification(message, `${dedupKey}:no-touch`);
       }
