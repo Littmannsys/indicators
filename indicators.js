@@ -18,7 +18,7 @@ let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const EMA_PERIODS        = [20]; // Tracks only the 20 EMA
-const COOLDOWN_CANDLES   = 5;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 8;        // Closed candles to wait before re-alerting for touches
 const NO_TOUCH_SECONDS   = 50 * 60;  // 50 minutes (in seconds) for the no-touch alert
 
 // Emoji mapping to identify the EMA period
