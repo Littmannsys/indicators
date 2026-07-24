@@ -27,7 +27,7 @@ const EMA_EMOJIS = {
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'r_25']; 
+const SYMBOLS    = ['R_10', 'R_25']; 
 const TIMEFRAMES = ['5min'];
 
 const timeframeMap = { '5min': 300 }; // 5 mins = 300 seconds
